@@ -39,15 +39,15 @@ managers_raw <- url %>%
 
 Now we can parse this tibble into something more friendly. We only need the manager name, club and date from and to.
 ```{r prepare manager data}
-managers_prep <- managers_raw %>% select(Manager_Name = Name, 
-                                         Manager_Club = Club, 
-                                         Managed_From = From, 
-                                         Managed_Until = Until)
+managers_prep <- managers_raw %>% select(manager_name = Name, 
+                                         managed_club = Club, 
+                                         managed_from = From, 
+                                         managed_until = Until)
 
-managers_prep %<>% mutate(Managed_Until = if_else(Managed_Until == 'Present*', format.Date(Sys.Date() + 1, format = "%e %B %Y"), Managed_Until))
+managers_prep %<>% mutate(managed_until = if_else(managed_until == 'Present*', format.Date(Sys.Date() + 1, format = "%e %B %Y"), managed_until))
 
-managers_prep %<>% mutate(Managed_From = lubridate::as_date(Managed_From, format = "%e %B %Y", tz = "UTC"), 
-                          Managed_Until = lubridate::as_date(Managed_Until, format = "%e %B %Y", tz = "UTC"))
+managers_prep %<>% mutate(managed_from = lubridate::as_date(managed_from, format = "%e %B %Y", tz = "UTC"), 
+                          managed_until = lubridate::as_date(managed_until, format = "%e %B %Y", tz = "UTC"))
 ```
 
 So now we can ask simple questions like...who had the longest managerial spells across clubs?
@@ -56,33 +56,41 @@ So now we can ask simple questions like...who had the longest managerial spells 
 theme_set(theme_rb())
 
 managers_prep %>%
-  mutate(Managed_Time = as.numeric(Managed_Until - Managed_From)/365.25) %>%
-  top_n(10, wt = Managed_Time) %>%
-  mutate(Manager_Name = as.factor(paste(Manager_Name, Manager_Club, sep = "\n"))) %>%
-  mutate(Manager_Name = fct_reorder(Manager_Name, Managed_Time)) %>%
-  ggplot(aes(x = Manager_Name, y = Managed_Time)) +
+  mutate(managed_time = as.numeric(managed_until - managed_from)/365.25) %>%
+  top_n(10, wt = managed_time) %>%
+  mutate(manager_name = as.factor(paste(manager_name, managed_club, sep = "\n"))) %>%
+  mutate(manager_name = fct_reorder(manager_name, managed_time)) %>%
+  ggplot(aes(x = manager_name, y = managed_time)) +
   geom_col() +
   coord_flip()
 ```
 
+### The games
 
-```{r}
-managers_prep %>% mutate(Duration_Calc = as.numeric(Managed_Until - Managed_From)) %>%
-  mutate(duration_diff = Duration_Calc - Duration) %>%
-  filter(duration_diff != 0)
+We're going to scrape the game data from the excellent [football-data.co.uk](http://football-data.co.uk) site. The game-by-game data files are stored like this: `http://football-data.co.uk/mmz4281/1819/E0.csv` where the `1819` signifies the 2018-2019 season.
+
+To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
+
+```{r extract game data, message=FALSE}
+from_date <- seq(1995,2016,1) %>% as.character() %>% substr(3,4)
+to_date <- seq(1996,2017,1) %>% as.character() %>% substr(3,4)
+date_seq <- paste0(from_date, to_date)
+
+game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "/E0.csv")
+
+games_raw <- game_data_filenames %>% 
+  map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% 
+  reduce(rbind) %>%
+  as_tibble()
 ```
 
-```{r}
-d1 <- seq(1995,2016,1) %>% as.character() %>% substr(3,4)
-d2 <- seq(1996,2017,1) %>% as.character() %>% substr(3,4)
-d3 <- paste0(d1,d2)
+There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
 
-files <- paste0("http://football-data.co.uk/mmz4281/",d3,"/E0.csv")
+Now that we have this raw data we need to fill it out. We have a table of matches but each match contains data for the home team and away team so it needs to be doubled out.
+```{r prepare game data}
+games_prep <- games_raw %>% select(Game_Date = Date, everything())
 
-x <- files %>% map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% reduce(rbind)
-x <- as_tibble(x)
-
-
+home_games <- games_prep %>% select(Game_Date, Game_Club = HomeTeam, Goals = FTHG, Opponent = AwayTeam, Op_Goals = FTAG, Game_Location = )
 x %<>% 
   mutate(HPoints = case_when(FTHG > FTAG ~ 3, FTHG < FTAG ~ 0, TRUE ~ 1)) %>%
   mutate(APoints = case_when(FTHG < FTAG ~ 3, FTHG > FTAG ~ 0, TRUE ~ 1))
