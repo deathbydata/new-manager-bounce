@@ -23,7 +23,7 @@ library(feather)
 ## Load data
 
 ```{r load data}
-results <- read_feather("../data/game_results_full.feather")
+full_results <- read_feather("../data/game_results_valid_final.feather")
 ```
 
 ## Exploratory Analysis
@@ -33,7 +33,7 @@ So now we can ask simple questions like...who had the longest managerial spells 
 ```{r longest serving mgrs}
 theme_set(theme_rb())
 
-managers_prep %>%
+full_results %>%
   mutate(managed_time = as.numeric(managed_until - managed_from)/365.25) %>%
   top_n(10, wt = managed_time) %>%
   mutate(manager_name = as.factor(paste(manager_name, managed_club, sep = "\n"))) %>%
