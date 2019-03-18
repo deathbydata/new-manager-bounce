@@ -72,8 +72,11 @@ We're going to scrape the game data from the excellent [football-data.co.uk](htt
 To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
 
 ```{r extract game data, message=FALSE}
-from_date <- seq(1995,2016,1) %>% as.character() %>% substr(3,4)
-to_date <- seq(1996,2017,1) %>% as.character() %>% substr(3,4)
+firstyear <- 1995
+lastyear <- 2019
+
+from_date <- seq(lastyear - 1, firstyear, -1) %>% as.character() %>% substr(3,4)
+to_date <- seq(lastyear, firstyear + 1, -1) %>% as.character() %>% substr(3,4)
 date_seq <- paste0(from_date, to_date)
 
 game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "/E0.csv")
@@ -81,27 +84,177 @@ game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "
 games_raw <- game_data_filenames %>% 
   map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% 
   reduce(rbind) %>%
-  as_tibble()
+  as_tibble() %>%
+  filter(complete.cases(.))
 ```
 
 There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
 
 Now that we have this raw data we need to fill it out. We have a table of matches but each match contains data for the home team and away team so it needs to be doubled out.
+
+```{r club name matching}
+club_names <- tribble(
+  ~short_name, ~long_name,
+  "Man United", "Manchester United",
+  "Huddersfield", "Huddersfield Town",
+  "Newcastle", "Newcastle United",
+  "Wolves", "Wolverhampton Wanderers",
+  "Cardiff", "Cardiff City",
+  "Leicester", "Leicester City",
+  "Tottenham", "Tottenham Hotspur",
+  "West Ham", "West Ham United",
+  "Brighton", "Brighton & Hove Albion",
+  "Man City", "Manchester City",
+  "Bolton", "Bolton Wanderers",
+  "Blackburn", "Blackburn Rovers",
+  "Wigan", "Wigan Athletic",
+  "QPR", "Queens Park Rangers",
+  "Hull", "Hull City",
+  "Swansea", "Swansea City",
+  "Stoke", "Stoke City",
+  "West Brom", "West Bromwich Albion",
+  "Derby", "Derby County",
+  "Charlton", "Charlton Athletic",
+  "Leeds", "Leeds United",
+  "Middlesboro", "Middlesbrough",
+  "Ipswich", "Ipswich Town",
+  "Coventry", "Coventry City",
+  "Bradford", "Bradford City",
+  "Sheffield Weds", "Sheffield Wednesday",
+  "Nott'm Forest", "Nottingham Forest",
+  "Norwich", "Norwich City",
+  "Birmingham", "Birmingham City")
+```
+
+```{r}
+games_raw %<>% 
+  left_join(club_names, by = c("HomeTeam" = "short_name")) %>%
+  mutate(HomeTeam = ifelse(is.na(long_name), HomeTeam, long_name)) %>%
+  select(-long_name) %>% 
+  left_join(club_names, by = c("AwayTeam" = "short_name")) %>%
+  mutate(AwayTeam = ifelse(is.na(long_name), AwayTeam, long_name)) %>%
+  select(-long_name)
+```
+
 ```{r prepare game data}
-games_prep <- games_raw %>% select(Game_Date = Date, everything())
+games_prep <- games_raw %>% select(game_date = Date, everything()) %>% mutate(game_id = row_number())
 
-home_games <- games_prep %>% select(Game_Date, Game_Club = HomeTeam, Goals = FTHG, Opponent = AwayTeam, Op_Goals = FTAG, Game_Location = )
-x %<>% 
-  mutate(HPoints = case_when(FTHG > FTAG ~ 3, FTHG < FTAG ~ 0, TRUE ~ 1)) %>%
-  mutate(APoints = case_when(FTHG < FTAG ~ 3, FTHG > FTAG ~ 0, TRUE ~ 1))
+games_prep %<>% mutate(game_date = case_when(
+  str_length(game_date) == 10 ~ as_date(game_date, format = "%d/%m/%Y", tz = "UTC"),
+  str_length(game_date) == 8 ~ as_date(game_date, format = "%d/%m/%y", tz = "UTC"),
+  TRUE ~ as_date('1900-01-01', tz = "UTC")))
 
-hMatches <- x %>% select(Date, HomeTeam, HPoints, FTHG) %>% rename(Team = HomeTeam, Points = HPoints, Goals = FTHG) %>% mutate(Playing = "H")
-aMatches <- x %>% select(Date, AwayTeam, APoints, FTAG) %>% rename(Team = AwayTeam, Points = APoints, Goals = FTAG) %>% mutate(Playing = "A")
-matchesFinal <- hMatches %>% bind_rows(aMatches)
-matchesFinal %<>% mutate(Date = as.Date(Date, format = "%d/%m/%y")) %>% rename(MatchDate = Date)
-#matchesFinal %>% filter(Team == "Arsenal") %>% View()
+home_games <- games_prep %>% 
+  select(game_id, game_date, game_team = HomeTeam, goals = FTHG, opponent = AwayTeam, opponent_goals = FTAG) %>%
+  mutate(game_location = "Home", 
+         points = case_when(goals > opponent_goals ~ 3, goals < opponent_goals ~ 0, TRUE ~ 1))
 
-matchesFinal %<>% left_join(managers, by = c("Team" = "Club")) %>% filter(MatchDate >= From, MatchDate <= Until)
+away_games <- games_prep %>% 
+  select(game_id, game_date, game_team = AwayTeam, goals = FTAG, opponent = HomeTeam, opponent_goals = FTHG) %>%
+  mutate(game_location = "Away", 
+         points = case_when(goals > opponent_goals ~ 3, goals < opponent_goals ~ 0, TRUE ~ 1))
+
+game_results_full <- 
+  bind_rows(home_games, away_games)
+```
+
+```{r}
+library(directlabels)
+
+game_results_full %>%
+  group_by(game_team) %>%
+  arrange(game_date) %>%
+  mutate(cumulative_points = cumsum(points)) %>%
+  ggplot(aes(x = game_date, y = cumulative_points, group = game_team)) +
+  geom_line() +
+  geom_dl(aes(label = game_team), method = "last.points")
+
+game_results_full %>%
+  ggplot(aes(colour = game_location, x = points)) +
+  geom_line(stat = "density")
+```
+
+
+# Putting it together
+
+```{r}
+game_results_full %>% 
+  anti_join(managers_prep,  by = c("game_team" = "managed_club")) %>%
+  select(game_team) %>%
+  distinct()
+
+managers_prep %>% 
+  anti_join(game_results_full,  by = c("managed_club" = "game_team")) %>%
+  select(managed_club) %>%
+  distinct()
+```
+
+```{r manager cleanup}
+managers_prep %<>%
+  filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City"))
+```
+
+```{r}
+managers_prep %<>%
+  arrange(managed_club, managed_from) %>%
+  group_by(managed_club) %>%
+  mutate(next_mgr_started = lead(managed_from)) %>% 
+  mutate(overlap = as.numeric(next_mgr_started - managed_until)) %>%
+  mutate(overlap = if_else(is.na(overlap), 1, overlap)) %>%
+  mutate(managed_until = if_else(overlap == 0, managed_until - 1, managed_until)) %>%
+  select(-next_mgr_started, -overlap) %>%
+  ungroup()
+```
+
+
+```{r}
+full_result_data <- game_results_full %>%
+  left_join(managers_prep, by = c("game_team" = "managed_club")) %>%
+  mutate(valid_date = (game_date >= managed_from & game_date <= managed_until))
+
+valid_games <- full_result_data %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% 
+  filter(n == 2) 
+
+valid_games %>%
+  ggplot(aes(y = goals, x = game_location)) +
+  geom_boxplot()
+
+valid_games %<>% 
+  mutate(manager_tenure = as.numeric(game_date - managed_from))
+
+valid_games %>% 
+  mutate(mgr_tenure_group = cut(manager_tenure, c(0, 28, 45, 60, 90, 120, 180, 270, 365, 720, 99999))) %>%
+  group_by(mgr_tenure_group, game_location, points) %>%
+  tally() %>% 
+  ungroup() %>%
+  group_by(mgr_tenure_group, game_location) %>%
+  mutate(n = n / sum(n)) %>%
+  spread(points, n)
+
+valid_games %>% 
+  mutate(mgr_tenure_group = cut(manager_tenure, c(-1, 28, 45, 60, 90, 120, 180, 270, 365, 720, 99999))) %>%
+  group_by(mgr_tenure_group, game_location) %>%
+  summarise(average_points = mean(points)) %>%
+  ggplot(aes(x = mgr_tenure_group, y = average_points)) +
+  geom_col() +
+  facet_wrap(~ game_location)
+
+goals <- full_result_data %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% filter(n == 2) %>%
+  pull(goals)
+
+x <- MASS::fitdistr(goals, densfun = "Poisson") %>% broom::tidy()
+
+exp_goals <- rpois(18000, lambda = x %>% pull(estimate))
+
+curve(dpois(c(0:10), x %>% pull(estimate)))
+
+plot(exp_goals)
 
 matchesFinal %>% 
   filter(Team == "Chelsea") %>% 
