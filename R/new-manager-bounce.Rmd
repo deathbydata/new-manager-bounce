@@ -17,6 +17,7 @@ library(rvest)
 library(lubridate)
 library(magrittr)
 library(redbull)
+library(feather)
 ```
 
 ## Extract data
@@ -39,7 +40,7 @@ managers_raw <- url %>%
 
 Now we can parse this tibble into something more friendly. We only need the manager name, club and date from and to.
 ```{r prepare manager data}
-managers_prep <- managers_raw %>% select(manager_name = Name, 
+managers_prep <- managers_raw %>% dplyr::select(manager_name = Name, 
                                          managed_club = Club, 
                                          managed_from = From, 
                                          managed_until = Until)
@@ -50,47 +51,33 @@ managers_prep %<>% mutate(managed_from = lubridate::as_date(managed_from, format
                           managed_until = lubridate::as_date(managed_until, format = "%e %B %Y", tz = "UTC"))
 ```
 
-So now we can ask simple questions like...who had the longest managerial spells across clubs?
-
-```{r longest serving mgrs}
-theme_set(theme_rb())
-
-managers_prep %>%
-  mutate(managed_time = as.numeric(managed_until - managed_from)/365.25) %>%
-  top_n(10, wt = managed_time) %>%
-  mutate(manager_name = as.factor(paste(manager_name, managed_club, sep = "\n"))) %>%
-  mutate(manager_name = fct_reorder(manager_name, managed_time)) %>%
-  ggplot(aes(x = manager_name, y = managed_time)) +
-  geom_col() +
-  coord_flip()
+Need to fix a few little errors in this data..... ***
+```{r manager cleanup}
+managers_prep %<>%
+  filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City"))
 ```
 
-### The games
-
-We're going to scrape the game data from the excellent [football-data.co.uk](http://football-data.co.uk) site. The game-by-game data files are stored like this: `http://football-data.co.uk/mmz4281/1819/E0.csv` where the `1819` signifies the 2018-2019 season.
-
-To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
-
-```{r extract game data, message=FALSE}
-firstyear <- 1995
-lastyear <- 2019
-
-from_date <- seq(lastyear - 1, firstyear, -1) %>% as.character() %>% substr(3,4)
-to_date <- seq(lastyear, firstyear + 1, -1) %>% as.character() %>% substr(3,4)
-date_seq <- paste0(from_date, to_date)
-
-game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "/E0.csv")
-
-games_raw <- game_data_filenames %>% 
-  map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% 
-  reduce(rbind) %>%
-  as_tibble() %>%
-  filter(complete.cases(.))
+```{r}
+managers_prep %<>%
+  arrange(managed_club, managed_from) %>%
+  group_by(managed_club) %>%
+  mutate(next_mgr_started = lead(managed_from)) %>% 
+  mutate(overlap = as.numeric(next_mgr_started - managed_until)) %>%
+  mutate(overlap = if_else(is.na(overlap), 1, overlap)) %>%
+  mutate(managed_until = if_else(overlap == 0, managed_until - 1, managed_until)) %>%
+  dplyr::select(-next_mgr_started, -overlap) %>%
+  ungroup()
 ```
 
-There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
+```{r}
+managers_prep %>% write_feather(path = "../data/managers.feather")
+```
 
-Now that we have this raw data we need to fill it out. We have a table of matches but each match contains data for the home team and away team so it needs to be doubled out.
+### Club name mapping
+
+In the two datasets clubs are named differently (e.g. "Man United" vs "Manchester United"). I considered doing a little string similarity comparison to fix this but ultimately I took the lazy/boring route and just created a separate lookup table.
 
 ```{r club name matching}
 club_names <- tribble(
@@ -124,9 +111,52 @@ club_names <- tribble(
   "Nott'm Forest", "Nottingham Forest",
   "Norwich", "Norwich City",
   "Birmingham", "Birmingham City")
+
+club_names %>% head() %>% knitr::kable()
 ```
 
 ```{r}
+club_names %>% write_feather(path = "../data/club_name_mapping.feather")
+```
+
+### The games
+
+We're going to scrape the game data from the excellent [football-data.co.uk](http://football-data.co.uk) site. The game-by-game data files are stored like this: `http://football-data.co.uk/mmz4281/1819/E0.csv` where the `1819` signifies the 2018-2019 season.
+
+To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
+
+```{r extract game data, message=FALSE}
+firstyear <- 1995
+lastyear <- 2019
+
+from_date <- seq(lastyear - 1, firstyear, -1) %>% as.character() %>% substr(3,4)
+to_date <- seq(lastyear, firstyear + 1, -1) %>% as.character() %>% substr(3,4)
+date_seq <- paste0(from_date, to_date)
+
+game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "/E0.csv")
+
+games_raw <- game_data_filenames %>% 
+  map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% 
+  reduce(rbind) %>%
+  as_tibble() %>%
+  filter(complete.cases(.))
+```
+
+```{r}
+games_raw %<>% mutate(Date = as.character(Date)) %>% as_tibble()
+
+games_raw %>% write_feather("../data/game_data_raw.feather")
+```
+
+There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
+
+Now that we have this raw data we need to fill it out. We have a table of matches but each match contains data for the home team and away team so it needs to be doubled out.
+
+```{r}
+games_raw <- read_feather("../data/game_data_raw.feather")
+```
+
+```{r map club names}
 games_raw %<>% 
   left_join(club_names, by = c("HomeTeam" = "short_name")) %>%
   mutate(HomeTeam = ifelse(is.na(long_name), HomeTeam, long_name)) %>%
@@ -137,9 +167,12 @@ games_raw %<>%
 ```
 
 ```{r prepare game data}
-games_prep <- games_raw %>% select(game_date = Date, everything()) %>% mutate(game_id = row_number())
+games_prep <- games_raw %>% 
+  select(game_date = Date, everything()) %>% 
+  mutate(game_id = row_number())
 
-games_prep %<>% mutate(game_date = case_when(
+games_prep %<>% 
+  mutate(game_date = case_when(
   str_length(game_date) == 10 ~ as_date(game_date, format = "%d/%m/%Y", tz = "UTC"),
   str_length(game_date) == 8 ~ as_date(game_date, format = "%d/%m/%y", tz = "UTC"),
   TRUE ~ as_date('1900-01-01', tz = "UTC")))
@@ -156,6 +189,8 @@ away_games <- games_prep %>%
 
 game_results_full <- 
   bind_rows(home_games, away_games)
+
+game_results_full %>% write_feather("../data/game_results_full.feather")
 ```
 
 ```{r}
@@ -175,6 +210,30 @@ game_results_full %>%
 ```
 
 
+# The fun bit
+
+## Create a joined up df
+```{r}
+results <- read_feather("../data/game_results_full.feather")
+managers <- read_feather("../data/managers.feather")
+```
+
+
+So now we can ask simple questions like...who had the longest managerial spells across clubs?
+
+```{r longest serving mgrs}
+theme_set(theme_rb())
+
+managers_prep %>%
+  mutate(managed_time = as.numeric(managed_until - managed_from)/365.25) %>%
+  top_n(10, wt = managed_time) %>%
+  mutate(manager_name = as.factor(paste(manager_name, managed_club, sep = "\n"))) %>%
+  mutate(manager_name = fct_reorder(manager_name, managed_time)) %>%
+  ggplot(aes(x = manager_name, y = managed_time)) +
+  geom_col() +
+  coord_flip()
+```
+
 # Putting it together
 
 ```{r}
@@ -187,25 +246,6 @@ managers_prep %>%
   anti_join(game_results_full,  by = c("managed_club" = "game_team")) %>%
   select(managed_club) %>%
   distinct()
-```
-
-```{r manager cleanup}
-managers_prep %<>%
-  filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
-  filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
-  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City"))
-```
-
-```{r}
-managers_prep %<>%
-  arrange(managed_club, managed_from) %>%
-  group_by(managed_club) %>%
-  mutate(next_mgr_started = lead(managed_from)) %>% 
-  mutate(overlap = as.numeric(next_mgr_started - managed_until)) %>%
-  mutate(overlap = if_else(is.na(overlap), 1, overlap)) %>%
-  mutate(managed_until = if_else(overlap == 0, managed_until - 1, managed_until)) %>%
-  select(-next_mgr_started, -overlap) %>%
-  ungroup()
 ```
 
 
