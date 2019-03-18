@@ -28,26 +28,10 @@ full_results <- read_feather("../data/game_results_valid_final.feather")
 
 ## Exploratory Analysis
 
-So now we can ask simple questions like...who had the longest managerial spells across clubs?
-
-```{r longest serving mgrs}
-theme_set(theme_rb())
-
-full_results %>%
-  mutate(managed_time = as.numeric(managed_until - managed_from)/365.25) %>%
-  top_n(10, wt = managed_time) %>%
-  mutate(manager_name = as.factor(paste(manager_name, managed_club, sep = "\n"))) %>%
-  mutate(manager_name = fct_reorder(manager_name, managed_time)) %>%
-  ggplot(aes(x = manager_name, y = managed_time)) +
-  geom_col() +
-  coord_flip()
-```
-
-
 ```{r}
 library(directlabels)
 
-game_results_full %>%
+full_results %>%
   group_by(game_team) %>%
   arrange(game_date) %>%
   mutate(cumulative_points = cumsum(points)) %>%
@@ -55,7 +39,7 @@ game_results_full %>%
   geom_line() +
   geom_dl(aes(label = game_team), method = "last.points")
 
-game_results_full %>%
+full_results %>%
   ggplot(aes(colour = game_location, x = points)) +
   geom_line(stat = "density")
 ```
@@ -64,7 +48,20 @@ game_results_full %>%
 # The fun bit
 
 ```{r}
-valid_games %>% 
+full_results %<>% mutate(manager_tenure = as.numeric(game_date - managed_from)) %>%
+  select(-valid_date, -n)
+```
+
+
+```{r}
+full_results %>%
+  #filter(manager_tenure <= 8*365.25) %>%
+  ggplot(aes(x = manager_tenure/365.25, y = jitter(points))) +
+  geom_point(alpha = 0.3) +
+  geom_smooth() +
+  facet_wrap(~game_location)
+
+full_results %>% 
   mutate(mgr_tenure_group = cut(manager_tenure, c(0, 28, 45, 60, 90, 120, 180, 270, 365, 720, 99999))) %>%
   group_by(mgr_tenure_group, game_location, points) %>%
   tally() %>% 
@@ -73,7 +70,7 @@ valid_games %>%
   mutate(n = n / sum(n)) %>%
   spread(points, n)
 
-valid_games %>% 
+full_results %>% 
   mutate(mgr_tenure_group = cut(manager_tenure, c(-1, 28, 45, 60, 90, 120, 180, 270, 365, 720, 99999))) %>%
   group_by(mgr_tenure_group, game_location) %>%
   summarise(average_points = mean(points)) %>%
@@ -93,16 +90,6 @@ exp_goals <- rpois(18000, lambda = x %>% pull(estimate))
 curve(dpois(c(0:10), x %>% pull(estimate)))
 
 plot(exp_goals)
-
-matchesFinal %>% 
-  filter(Team == "Chelsea") %>% 
-  group_by(Name) %>% 
-  arrange(MatchDate) %>% 
-  mutate(runningPoints = cummean(Points)) %>%
-  mutate(daysInCharge = MatchDate - first(From)) %>%
-  ggplot(aes(x = daysInCharge, y = runningPoints, colour = Name)) + 
-  geom_point() +
-  geom_smooth(se = F, method = "lm")
 ```
 
 
