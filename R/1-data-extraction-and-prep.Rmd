@@ -62,7 +62,9 @@ For example there are some clubs which have two managers simultaneously (e.g. Ra
 managers_prep %<>%
   filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
   filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
-  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City"))
+  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City")) %>%
+  filter(! (manager_name == "Kevin Bond" & managed_club == "Queens Park Rangers")) %>%
+  mutate(managed_until = if_else((manager_name == "Roy Evans" & managed_club == "Liverpool" & managed_until == as.Date("1998-11-12")), as.Date("1998-06-30"), managed_until))
 ```
 
 Also - some of the management date ranges are a little tricky. In some cases the new manager takes over the day *after* the old manager (this is fine). In other cases it's the *same* day (this causes problems). In yet other cases it is many days later (could also causes problems).
@@ -148,6 +150,7 @@ games_raw <- game_data_filenames %>%
 
 There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
 
+### The writeback
 
 Let's dump these three datasets to feather for ease of extraction later.
 
@@ -235,7 +238,7 @@ Check that we have no missing teams in our game data (i.e. every row has a manag
 library(testthat)
 
 test_that('All games have a manager', expect_equal(game_results_full_raw %>% 
-  anti_join(managers_prep,  by = c("game_team" = "managed_club")) %>%
+  anti_join(managers,  by = c("game_team" = "managed_club")) %>%
   select(game_team) %>%
   distinct() %>%
   nrow(), 0))
@@ -246,8 +249,8 @@ test_that('All games have a manager', expect_equal(game_results_full_raw %>%
 Use the club name to join results to managers. We also create a "valid_date" column which tracks whether the game date is between the management dates for the manager.
 
 ```{r join results}
-full_result_data_raw <- game_results_full %>%
-  left_join(managers_prep, by = c("game_team" = "managed_club")) %>%
+full_result_data_raw <- game_results_full_raw %>%
+  left_join(managers, by = c("game_team" = "managed_club")) %>%
   mutate(valid_date = (game_date >= managed_from & game_date <= managed_until))
 ```
 
@@ -260,9 +263,21 @@ full_result_data_raw %>%
   filter(n != 2) %>%
   distinct(game_id) %>%
   count()
+
+full_result_data_raw %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% 
+  filter(n != 2) %>%
+  group_by(game_id, game_team) %>%
+  mutate(team_n = n()) %>%
+  ungroup() %>%
+  arrange(game_id) %>%
+  select(game_id:opponent_goals, manager_name:managed_until, n:team_n) %>%
+  filter(n == 1 | team_n > 1) %>%
+  View()
 ```
 
-Let's have a deeper look at these 38 games...
+Let's have a deeper look at these 24 games...
 ```{r}
 full_result_data_raw %>% 
   filter(valid_date) %>%
@@ -274,7 +289,7 @@ full_result_data_raw %>%
 
 We see a lot of them are due to overlapping management periods. 
 
-We will manually go back and fix these (one day). For now we're going to just remove these 38 games from the dataset.
+We will manually go back and fix these (one day). For now we're going to just remove these 24 games from the dataset.
 
 ```{r filter valid games}
 full_result_data_valid <- full_result_data_raw %>%
