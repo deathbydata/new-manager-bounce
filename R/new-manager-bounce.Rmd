@@ -16,16 +16,20 @@ library(tidyverse)
 library(rvest)
 library(lubridate)
 library(magrittr)
+library(redbull)
 ```
 
 ## Extract data
 
 ### The managers
 
-```{r}
+First we will pull the list of EPL managers, clubs and time-periods from the Wikipedia article on [Premier League Managers](https://en.wikipedia.org/wiki/List_of_Premier_League_managers).
+
+We're going to use `extract2` from the `magrittr` library which is a nice pipe-able replacement for `[[`. The actually scraping is done by `rvest`.
+```{r scrape manager data}
 url <- "https://en.wikipedia.org/wiki/List_of_Premier_League_managers"
 
-managers <- url %>% 
+managers_raw <- url %>% 
   read_html() %>% 
   html_nodes("table") %>% 
   extract2(2) %>% 
@@ -33,16 +37,39 @@ managers <- url %>%
   as_tibble()
 ```
 
+Now we can parse this tibble into something more friendly. We only need the manager name, club and date from and to.
+```{r prepare manager data}
+managers_prep <- managers_raw %>% select(Manager_Name = Name, 
+                                         Manager_Club = Club, 
+                                         Managed_From = From, 
+                                         Managed_Until = Until)
+
+managers_prep %<>% mutate(Managed_Until = if_else(Managed_Until == 'Present*', format.Date(Sys.Date() + 1, format = "%e %B %Y"), Managed_Until))
+
+managers_prep %<>% mutate(Managed_From = lubridate::as_date(Managed_From, format = "%e %B %Y", tz = "UTC"), 
+                          Managed_Until = lubridate::as_date(Managed_Until, format = "%e %B %Y", tz = "UTC"))
+```
+
+So now we can ask simple questions like...who had the longest managerial spells across clubs?
+
+```{r longest serving mgrs}
+theme_set(theme_rb())
+
+managers_prep %>%
+  mutate(Managed_Time = as.numeric(Managed_Until - Managed_From)/365.25) %>%
+  top_n(10, wt = Managed_Time) %>%
+  mutate(Manager_Name = as.factor(paste(Manager_Name, Manager_Club, sep = "\n"))) %>%
+  mutate(Manager_Name = fct_reorder(Manager_Name, Managed_Time)) %>%
+  ggplot(aes(x = Manager_Name, y = Managed_Time)) +
+  geom_col() +
+  coord_flip()
+```
+
+
 ```{r}
-managers %<>% select(Name, Club, From, Until)
-
-managers %<>% 
-  mutate(Name = str_sub(Name, start = 1, end = 1 + str_length(Name)/2)) %>%
-  mutate(From = str_sub(From, start = 9, end = 18)) %>%
-  mutate(Until = str_sub(Until, start = 9, end = 18)) %>%
-  mutate(From = as_date(From), Until = as_date(Until))
-
-managers %>% mutate(Until = if_else(is.na(Until), as.Date("2099-01-01", format = "%Y-%m-%d"), Until))
+managers_prep %>% mutate(Duration_Calc = as.numeric(Managed_Until - Managed_From)) %>%
+  mutate(duration_diff = Duration_Calc - Duration) %>%
+  filter(duration_diff != 0)
 ```
 
 ```{r}
