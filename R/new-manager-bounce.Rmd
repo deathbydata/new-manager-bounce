@@ -1,0 +1,84 @@
+---
+title: "New Manager Bounce"
+author: "Josh Muncke"
+date: "17/03/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Measuring the "New Manager Bounce" in the EPL
+
+```{r load our packages, message=FALSE}
+library(tidyverse)
+library(rvest)
+library(lubridate)
+library(magrittr)
+```
+
+## Extract data
+
+### The managers
+
+```{r}
+url <- "https://en.wikipedia.org/wiki/List_of_Premier_League_managers"
+
+managers <- url %>% 
+  read_html() %>% 
+  html_nodes("table") %>% 
+  extract2(2) %>% 
+  html_table(fill = T) %>% 
+  as_tibble()
+```
+
+```{r}
+managers %<>% select(Name, Club, From, Until)
+
+managers %<>% 
+  mutate(Name = str_sub(Name, start = 1, end = 1 + str_length(Name)/2)) %>%
+  mutate(From = str_sub(From, start = 9, end = 18)) %>%
+  mutate(Until = str_sub(Until, start = 9, end = 18)) %>%
+  mutate(From = as_date(From), Until = as_date(Until))
+
+managers %>% mutate(Until = if_else(is.na(Until), as.Date("2099-01-01", format = "%Y-%m-%d"), Until))
+```
+
+```{r}
+d1 <- seq(1995,2016,1) %>% as.character() %>% substr(3,4)
+d2 <- seq(1996,2017,1) %>% as.character() %>% substr(3,4)
+d3 <- paste0(d1,d2)
+
+files <- paste0("http://football-data.co.uk/mmz4281/",d3,"/E0.csv")
+
+x <- files %>% map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% reduce(rbind)
+x <- as_tibble(x)
+
+
+x %<>% 
+  mutate(HPoints = case_when(FTHG > FTAG ~ 3, FTHG < FTAG ~ 0, TRUE ~ 1)) %>%
+  mutate(APoints = case_when(FTHG < FTAG ~ 3, FTHG > FTAG ~ 0, TRUE ~ 1))
+
+hMatches <- x %>% select(Date, HomeTeam, HPoints, FTHG) %>% rename(Team = HomeTeam, Points = HPoints, Goals = FTHG) %>% mutate(Playing = "H")
+aMatches <- x %>% select(Date, AwayTeam, APoints, FTAG) %>% rename(Team = AwayTeam, Points = APoints, Goals = FTAG) %>% mutate(Playing = "A")
+matchesFinal <- hMatches %>% bind_rows(aMatches)
+matchesFinal %<>% mutate(Date = as.Date(Date, format = "%d/%m/%y")) %>% rename(MatchDate = Date)
+#matchesFinal %>% filter(Team == "Arsenal") %>% View()
+
+matchesFinal %<>% left_join(managers, by = c("Team" = "Club")) %>% filter(MatchDate >= From, MatchDate <= Until)
+
+matchesFinal %>% 
+  filter(Team == "Chelsea") %>% 
+  group_by(Name) %>% 
+  arrange(MatchDate) %>% 
+  mutate(runningPoints = cummean(Points)) %>%
+  mutate(daysInCharge = MatchDate - first(From)) %>%
+  ggplot(aes(x = daysInCharge, y = runningPoints, colour = Name)) + 
+  geom_point() +
+  geom_smooth(se = F, method = "lm")
+```
+
+
+
+
