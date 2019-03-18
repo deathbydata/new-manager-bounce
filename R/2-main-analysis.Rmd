@@ -1,0 +1,110 @@
+---
+title: "New Manager Bounce"
+subtitle: "Main Analysis"
+author: "Josh Muncke"
+date: "17/03/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Measuring the "New Manager Bounce" in the EPL
+
+```{r load our packages, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(magrittr)
+library(redbull)
+library(feather)
+```
+
+## Load data
+
+```{r load data}
+results <- read_feather("../data/game_results_full.feather")
+```
+
+## Exploratory Analysis
+
+So now we can ask simple questions like...who had the longest managerial spells across clubs?
+
+```{r longest serving mgrs}
+theme_set(theme_rb())
+
+managers_prep %>%
+  mutate(managed_time = as.numeric(managed_until - managed_from)/365.25) %>%
+  top_n(10, wt = managed_time) %>%
+  mutate(manager_name = as.factor(paste(manager_name, managed_club, sep = "\n"))) %>%
+  mutate(manager_name = fct_reorder(manager_name, managed_time)) %>%
+  ggplot(aes(x = manager_name, y = managed_time)) +
+  geom_col() +
+  coord_flip()
+```
+
+
+```{r}
+library(directlabels)
+
+game_results_full %>%
+  group_by(game_team) %>%
+  arrange(game_date) %>%
+  mutate(cumulative_points = cumsum(points)) %>%
+  ggplot(aes(x = game_date, y = cumulative_points, group = game_team)) +
+  geom_line() +
+  geom_dl(aes(label = game_team), method = "last.points")
+
+game_results_full %>%
+  ggplot(aes(colour = game_location, x = points)) +
+  geom_line(stat = "density")
+```
+
+
+# The fun bit
+
+```{r}
+valid_games %>% 
+  mutate(mgr_tenure_group = cut(manager_tenure, c(0, 28, 45, 60, 90, 120, 180, 270, 365, 720, 99999))) %>%
+  group_by(mgr_tenure_group, game_location, points) %>%
+  tally() %>% 
+  ungroup() %>%
+  group_by(mgr_tenure_group, game_location) %>%
+  mutate(n = n / sum(n)) %>%
+  spread(points, n)
+
+valid_games %>% 
+  mutate(mgr_tenure_group = cut(manager_tenure, c(-1, 28, 45, 60, 90, 120, 180, 270, 365, 720, 99999))) %>%
+  group_by(mgr_tenure_group, game_location) %>%
+  summarise(average_points = mean(points)) %>%
+  ggplot(aes(x = mgr_tenure_group, y = average_points)) +
+  geom_col() +
+  facet_wrap(~ game_location)
+
+goals <- full_result_data %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% filter(n == 2) %>%
+  pull(goals)
+
+x <- MASS::fitdistr(goals, densfun = "Poisson") %>% broom::tidy()
+
+exp_goals <- rpois(18000, lambda = x %>% pull(estimate))
+
+curve(dpois(c(0:10), x %>% pull(estimate)))
+
+plot(exp_goals)
+
+matchesFinal %>% 
+  filter(Team == "Chelsea") %>% 
+  group_by(Name) %>% 
+  arrange(MatchDate) %>% 
+  mutate(runningPoints = cummean(Points)) %>%
+  mutate(daysInCharge = MatchDate - first(From)) %>%
+  ggplot(aes(x = daysInCharge, y = runningPoints, colour = Name)) + 
+  geom_point() +
+  geom_smooth(se = F, method = "lm")
+```
+
+
+
+
