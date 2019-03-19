@@ -22,6 +22,8 @@ library(feather)
 
 ## Load data
 
+
+
 ```{r load data}
 full_results <- read_feather("../data/game_results_valid_final.feather")
 ```
@@ -48,10 +50,24 @@ full_results %>%
 # The fun bit
 
 ```{r}
-full_results %<>% mutate(manager_tenure = as.numeric(game_date - managed_from)) %>%
-  select(-valid_date, -n)
+full_results %<>% 
+  mutate(manager_tenure = as.numeric(game_date - managed_from)) %>%
+  select(-valid_date, -n) %>%
+  mutate(game_location = as.factor(game_location))
 ```
 
+```{r}
+
+goals_model <- glm(goals ~ game_month + game_location, 
+                   family = poisson(link = "log"), 
+                   data = full_results %>% 
+                     filter(! game_team %in% c('Manchester United', 'Arsenal', 'Charlton Athletic')) %>% 
+                     mutate(manager_tenure = manager_tenure/365) %>%
+                     mutate(game_month = as.factor(month(game_date))))
+
+summary(goals_model)
+
+```
 
 ```{r}
 full_results %>%
