@@ -1,6 +1,6 @@
 ---
 title: "New Manager Bounce"
-subtitle: "Data Extraction & Prep"
+subtitle: "Data Extraction"
 author: "Josh Muncke"
 date: "17/03/2019"
 output: html_document
