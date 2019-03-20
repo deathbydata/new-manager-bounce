@@ -83,6 +83,17 @@ full_results %>%
   geom_hline(yintercept = mean(full_results$points)) 
 ```
 
+```{r}
+full_results %>%
+  filter(game_team == "Chelsea") %>%
+  ggplot(aes(x = game_date, y = points, colour = paste(manager_name, managed_from, sep = ","))) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = F)
+
+```
+```
+
+
 
   #filter(manager_tenure <= 8*365.25) %>%
   ggplot(aes(x = manager_time_remaining/365.25, y = jitter(points))) +
