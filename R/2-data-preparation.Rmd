@@ -26,6 +26,9 @@ Load the required R packages.
 library(tidyverse)
 library(magrittr)
 library(feather)
+library(lubridate)
+library(testthat)
+library(redbull)
 ```
 
 Load the raw extracted data into memory.
@@ -38,14 +41,14 @@ club_names <- read_feather("../data/raw/mapping_data_raw.feather")
 
 ## Game data
 
-Now that we have this raw data we need to fill it out. We have a table of matches but each match contains data for the home team and away team so it needs to be doubled out.
+### Replace club names
 
-
-
-First we need to replace the short names in the game data with the full name from our mapping table.
+The names of teams between the manager and game data is slightly different for some clubs (e.g. "Man Utd" vs "Manchester United"). In order to remedy this we will use the mapping table we created in the first step to replace the team names for both the home and away team columns of each game.
 
 ```{r map club names}
-games_raw %<>% 
+games_prepared <- games_raw
+
+games_prepared %<>% 
   left_join(club_names, by = c("HomeTeam" = "short_name")) %>%
   mutate(HomeTeam = ifelse(is.na(long_name), HomeTeam, long_name)) %>%
   select(-long_name) %>% 
@@ -54,41 +57,93 @@ games_raw %<>%
   select(-long_name)
 ```
 
-We add an identifier column for games so we can keep track of missing/duplicates later on.
+### Expand game data
+
+The raw game data has one row per match with the results for both the home and away teams. Since we want to do our analysis at a club-by-club level we effectively need to double this data so that we have a single row per team per game indicating who the opponent was, the scores for each and whether that team was playing at home or away.
+
+We first add an identifier column (just the row number) for each game so we can keep track of missing/duplicates later on.
 
 ```{r add game id}
-games_prep <- games_raw %>% 
+games_prepared %<>% 
   select(game_date = Date, everything()) %>% 
   mutate(game_id = row_number())
 ```
 
-We fix the game date column to an actual date.
+We now update the game date column to format it to an actual date (there's a couple of different date formats to work with).
 
-```{r add game date}
-games_prep %<>% 
+```{r update game date}
+games_prepared %<>% 
   mutate(game_date = case_when(
   str_length(game_date) == 10 ~ as_date(game_date, format = "%d/%m/%Y", tz = "UTC"),
   str_length(game_date) == 8 ~ as_date(game_date, format = "%d/%m/%y", tz = "UTC"),
   TRUE ~ as_date('1900-01-01', tz = "UTC")))
-
 ```
 
-And we split the game data into two so we get both sides of each result and bind together.
+And finally we create two temporary versions of this data - one for the home result and one for the away result - before binding them together.
+
+We also make sure to create a "points" column indicating the number of points the team received for the match (0 for a loss, 1 for a draw, 3 for a win).
 
 ```{r create results data}
-home_games <- games_prep %>% 
+home_games <- games_prepared %>% 
   select(game_id, game_date, game_team = HomeTeam, goals = FTHG, opponent = AwayTeam, opponent_goals = FTAG) %>%
   mutate(game_location = "Home", 
          points = case_when(goals > opponent_goals ~ 3, goals < opponent_goals ~ 0, TRUE ~ 1))
 
-away_games <- games_prep %>% 
+away_games <- games_prepared %>% 
   select(game_id, game_date, game_team = AwayTeam, goals = FTAG, opponent = HomeTeam, opponent_goals = FTHG) %>%
   mutate(game_location = "Away", 
          points = case_when(goals > opponent_goals ~ 3, goals < opponent_goals ~ 0, TRUE ~ 1))
 
 game_results_full <- bind_rows(home_games, away_games)
+
+rm(list = c('home_games','away_games'))
 ```
 
+### Test and visualize
+
+A good test would be to make sure we have the right number of expected games between the `full` and `prepared` data sets and also check we don't have any games that have greater or less than two records.
+
+We're going to use the `testthat` package to check this.
+
+```{r compare game ids}
+test_that('Same number of distinct game ids',
+          expect_equal(
+            games_prepared %>% distinct(game_id) %>% tally(),
+            game_results_full %>% distinct(game_id) %>% tally()
+          ))
+```
+
+```{r check only two records per game}
+test_that('Same number of distinct game ids',
+          expect_equal(
+            game_results_full %>% add_count(game_id) %>% filter(n != 2) %>% tally() %>% pull(nn),
+            0
+          ))
+```
+
+Finally let's do a quick analysis to look at the average number of games per month over time - just a simple visual gut check. I'm going to use `ggplot2` and shamelessly self-promote the `[redbull](http://github.com/deathbydata/redbull)` package I developed for themeing.
+
+```{r visualize games over time}
+theme_set(theme_rb())
+
+game_results_full %>%
+  mutate(game_month = round_date(game_date, "month")) %>%
+  group_by(game_month) %>%
+  summarize(n_games = n_distinct(game_id)) %>%
+  ggplot(aes(x = game_month, y = n_games)) +
+  geom_line() +
+  labs(title = "Number of EPL games per month since 1995",
+       caption = "Source: football-data.co.uk",
+       x = "Month",
+       y = "Number of games")
+```
+
+All looks good so we write this prepared game data back locally.
+
+```{r save game data}
+game_results_full %>%
+  write_feather("../data/prep/game_data_prep.feather")
+```
 
 
 ### The managers
