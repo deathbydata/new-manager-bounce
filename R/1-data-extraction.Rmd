@@ -36,6 +36,8 @@ library(feather)
 
 ## Match data
 
+### Extraction
+
 We're going to scrape the game data from the excellent [football-data.co.uk](http://football-data.co.uk) site. The game-by-game data files are stored like this: `http://football-data.co.uk/mmz4281/1819/E0.csv` where the `1819` signifies the 2018-2019 season.
 
 To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
@@ -65,7 +67,16 @@ games_raw <- game_data_filenames %>%
 
 There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
 
-## The managers
+### Saving
+
+Now we save this raw data locally.
+
+```{r save game data}
+games_raw %>%
+  write_feather("../data/raw/game_data_raw.feather")
+```
+
+## Manager Data
 
 First we will pull the list of EPL managers, clubs and time-periods from the Wikipedia article on [Premier League Managers](https://en.wikipedia.org/wiki/List_of_Premier_League_managers).
 
