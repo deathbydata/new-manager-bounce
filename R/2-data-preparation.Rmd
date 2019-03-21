@@ -151,6 +151,8 @@ rm(list = c('club_names', 'games_prepared', 'games_raw'))
 
 ## Manager data
 
+### Basic cleaning
+
 Like most data that is scraped from a web-page the manager data is a little ugly and requires some love.
 
 For our purposes we only require the name of the manager, the club they managed and the time window so we `select` these columns and drop the rest.
@@ -176,9 +178,15 @@ managers_prepared %<>% mutate(managed_from = lubridate::as_date(managed_from, fo
                           managed_until = lubridate::as_date(managed_until, format = "%e %B %Y", tz = "UTC"))
 ```
 
-Need to fix a few little errors in this data.
+### Fixing manager date ranges
 
-For example there are some clubs which have two managers simultaneously (e.g. Ray Lewington and Ron Noades at Crystal Palace in 1998). Whilst that's logically okay it doesn't really work for this analysis since it will causes duplicate results.
+In an ideal world this manager data would cover all timeframes for all clubs and would map a single manager to each club at any given point of time. As you might expect - this is not the case.
+
+There are instances of multiple managers managing the same club simultaneously (e.g. Ray Lewington and Ron Noades at Crystal Palace in 1998); of clubs which have a period of time with **no** manager (e.g. there was a [two-week gap](https://www.worldfootball.net/teams/leicester-city/9/) between Nigel Pearson leaving Leicester City on 29th June 2015 and the appointment of Claudio Ranieri on 13th July 2015; and finally of plain erroneous data in the Wikipedia table (e.g. Tomas Brolin didn't manage Crystal Palace in 1998 - although [he did play there](https://www.worldfootball.net/teams/crystal-palace/9/)).
+
+Fixing these issues requires some deep digging and also some judgement calls since our analysis will require that each match for each club can be attributed to a single manager. The errors we can remove after some research but the gaps and overlaps need thinking - who do we attribute games to if there were two managers? What about if there was no manager?
+
+Whilst that's logically okay it doesn't really work for this analysis since it will causes duplicate results.
 
 ```{r manager cleanup}
 managers_prep %<>%
@@ -194,7 +202,7 @@ Also - some of the management date ranges are a little tricky. In some cases the
 This all requires manual investigation and fixing.
 
 ```{r fix manager date ranges}
-managers_prep %<>%
+managers_prepared %<>%
   arrange(managed_club, managed_from) %>%
   group_by(managed_club) %>%
   mutate(next_mgr_started = lead(managed_from)) %>% 
@@ -205,25 +213,6 @@ managers_prep %<>%
   ungroup()
 ```
 
-
-### Fixing game data
-
-
-
-Let's also dump this to a feather.
-
-```{r write game results full}
-game_results_full %>% write_feather("../data/game_results_full.feather")
-```
-
-## Fix results data
-
-Load back in our feather file.
-
-```{r load results data}
-game_results_full_raw <- read_feather("../data/game_results_full.feather")
-managers <- read_feather("../data/managers.feather")
-```
 
 Check that we have no missing teams in our game data (i.e. every row has a manager)
 
