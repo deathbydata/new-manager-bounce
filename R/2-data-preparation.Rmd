@@ -145,20 +145,34 @@ game_results_full %>%
   write_feather("../data/prep/game_data_prep.feather")
 ```
 
+```{r remove un-needed dfs}
+rm(list = c('club_names', 'games_prepared', 'games_raw'))
+```
 
-### The managers
+## Manager data
 
-Now we can parse this tibble into something more friendly. We only need the manager name, club and date from and to.
+Like most data that is scraped from a web-page the manager data is a little ugly and requires some love.
+
+For our purposes we only require the name of the manager, the club they managed and the time window so we `select` these columns and drop the rest.
 
 ```{r prepare manager data}
-managers_prep <- managers_raw %>% dplyr::select(manager_name = Name, 
-                                         managed_club = Club, 
-                                         managed_from = From, 
-                                         managed_until = Until)
+managers_prepared <- managers_raw
 
-managers_prep %<>% mutate(managed_until = if_else(managed_until == 'Present*', format.Date(Sys.Date() + 1, format = "%e %B %Y"), managed_until))
+managers_prepared %<>% select(manager_name = Name, 
+                          managed_club = Club, 
+                          managed_from = From, 
+                          managed_until = Until)
+```
 
-managers_prep %<>% mutate(managed_from = lubridate::as_date(managed_from, format = "%e %B %Y", tz = "UTC"), 
+Some of the date data needs to be fixed. In particular for incumbent managers the `managed_until` column has the value "Present*" which we will replace with today's date.
+
+We also coerce the string dates into a formatted date field.
+
+```{r fix manager dates}
+managers_prepared %<>% 
+  mutate(managed_until = if_else(managed_until == 'Present*', format.Date(Sys.Date() + 1, format = "%e %B %Y"), managed_until))
+
+managers_prepared %<>% mutate(managed_from = lubridate::as_date(managed_from, format = "%e %B %Y", tz = "UTC"), 
                           managed_until = lubridate::as_date(managed_until, format = "%e %B %Y", tz = "UTC"))
 ```
 
