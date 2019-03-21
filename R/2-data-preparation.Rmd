@@ -188,6 +188,18 @@ Fixing these issues requires some deep digging and also some judgement calls sin
 
 Whilst that's logically okay it doesn't really work for this analysis since it will causes duplicate results.
 
+To help us find and iterate on the issues, we build a small function that will join the `game_results` and `managers` data and return any matches with issues (either missing or duplicated).
+
+```{r find problem matches}
+get_problem_matches <- function() {
+  match_manager_join <- game_results_full %>% 
+    left_join(managers_prepared, by = c('game_team' = 'managed_club')) %>%
+    filter(game_date >= managed_from, game_date <= managed_until)
+  
+  match_manager_join %>% tally()
+}
+```
+
 ```{r manager cleanup}
 managers_prep %<>%
   filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
