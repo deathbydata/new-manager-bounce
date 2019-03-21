@@ -78,7 +78,9 @@ games_raw %>%
 
 ## Manager Data
 
-First we will pull the list of EPL managers, clubs and time-periods from the Wikipedia article on [Premier League Managers](https://en.wikipedia.org/wiki/List_of_Premier_League_managers).
+### Extractions
+
+Now we will pull the list of EPL managers, clubs and time-periods from the Wikipedia article on [Premier League Managers](https://en.wikipedia.org/wiki/List_of_Premier_League_managers).
 
 We're going to use `extract2` from the `magrittr` library which is a nice pipe-able replacement for `[[`. The actually scraping is done by `rvest`.
 
@@ -91,6 +93,15 @@ managers_raw <- url %>%
   extract2(2) %>% 
   html_table(fill = T) %>% 
   as_tibble()
+```
+
+### Saving
+
+Write the manager data locally.
+
+```{r save manager data}
+managers_raw %>%
+  write_feather("../data/raw/manager_data_raw.feather")
 ```
 
 Now we can parse this tibble into something more friendly. We only need the manager name, club and date from and to.
