@@ -1,0 +1,347 @@
+---
+title: "New Manager Bounce"
+subtitle: "Data Extraction"
+author: "Josh Muncke"
+date: "17/03/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Extraction
+
+The first step in the process is to extract the datasets needed for this analysis from remote sources.
+
+There are three primary datasets required for this analysis:
+
+1. The match data (results per EPL match) - from [football-data.co.uk](http://football-data.co.uk).
+2. The manager data including start and end dates for each manager at each club from Wikipedia.
+3. A mapping of club names between these two data sources - manually created.
+
+
+We will be using `rvest` to scrape the two remote data sets. Let's get started!
+
+## Setup 
+
+Load the required R packages.
+
+```{r load our packages, message=FALSE}
+library(tidyverse)
+library(rvest)
+library(magrittr)
+library(feather)
+```
+
+## Match data
+
+We're going to scrape the game data from the excellent [football-data.co.uk](http://football-data.co.uk) site. The game-by-game data files are stored like this: `http://football-data.co.uk/mmz4281/1819/E0.csv` where the `1819` signifies the 2018-2019 season.
+
+To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
+
+```{r game data files, message=FALSE}
+firstyear <- 1995
+lastyear <- 2019
+
+from_date <- seq(lastyear - 1, firstyear, -1) %>% as.character() %>% substr(3,4)
+to_date <- seq(lastyear, firstyear + 1, -1) %>% as.character() %>% substr(3,4)
+date_seq <- paste0(from_date, to_date)
+
+game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "/E0.csv")
+```
+
+Now download the files and `reduce` them into a single data frame.
+
+```{r download game data}
+games_raw <- game_data_filenames %>% 
+  map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% 
+  reduce(rbind) %>%
+  as_tibble() %>%
+  filter(complete.cases(.)) %>% 
+  mutate(Date = as.character(Date)) %>%
+  as_tibble()
+```
+
+There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
+
+## The managers
+
+First we will pull the list of EPL managers, clubs and time-periods from the Wikipedia article on [Premier League Managers](https://en.wikipedia.org/wiki/List_of_Premier_League_managers).
+
+We're going to use `extract2` from the `magrittr` library which is a nice pipe-able replacement for `[[`. The actually scraping is done by `rvest`.
+
+```{r scrape manager data}
+url <- "https://en.wikipedia.org/wiki/List_of_Premier_League_managers"
+
+managers_raw <- url %>% 
+  read_html() %>% 
+  html_nodes("table") %>% 
+  extract2(2) %>% 
+  html_table(fill = T) %>% 
+  as_tibble()
+```
+
+Now we can parse this tibble into something more friendly. We only need the manager name, club and date from and to.
+
+```{r prepare manager data}
+managers_prep <- managers_raw %>% dplyr::select(manager_name = Name, 
+                                         managed_club = Club, 
+                                         managed_from = From, 
+                                         managed_until = Until)
+
+managers_prep %<>% mutate(managed_until = if_else(managed_until == 'Present*', format.Date(Sys.Date() + 1, format = "%e %B %Y"), managed_until))
+
+managers_prep %<>% mutate(managed_from = lubridate::as_date(managed_from, format = "%e %B %Y", tz = "UTC"), 
+                          managed_until = lubridate::as_date(managed_until, format = "%e %B %Y", tz = "UTC"))
+```
+
+Need to fix a few little errors in this data.
+
+For example there are some clubs which have two managers simultaneously (e.g. Ray Lewington and Ron Noades at Crystal Palace in 1998). Whilst that's logically okay it doesn't really work for this analysis since it will causes duplicate results.
+
+```{r manager cleanup}
+managers_prep %<>%
+  filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City")) %>%
+  filter(! (manager_name == "Kevin Bond" & managed_club == "Queens Park Rangers")) %>%
+  mutate(managed_until = if_else((manager_name == "Roy Evans" & managed_club == "Liverpool" & managed_until == as.Date("1998-11-12")), as.Date("1998-06-30"), managed_until))
+```
+
+Also - some of the management date ranges are a little tricky. In some cases the new manager takes over the day *after* the old manager (this is fine). In other cases it's the *same* day (this causes problems). In yet other cases it is many days later (could also causes problems).
+
+This all requires manual investigation and fixing.
+
+```{r fix manager date ranges}
+managers_prep %<>%
+  arrange(managed_club, managed_from) %>%
+  group_by(managed_club) %>%
+  mutate(next_mgr_started = lead(managed_from)) %>% 
+  mutate(overlap = as.numeric(next_mgr_started - managed_until)) %>%
+  mutate(overlap = if_else(is.na(overlap), 1, overlap)) %>%
+  mutate(managed_until = if_else(overlap == 0, managed_until - 1, managed_until)) %>%
+  dplyr::select(-next_mgr_started, -overlap) %>%
+  ungroup()
+```
+
+### Club name mapping
+
+In the two datasets clubs are named differently (e.g. "Man United" vs "Manchester United"). I considered doing a little string similarity comparison to fix this but ultimately I took the lazy/boring route and just created a separate lookup table.
+
+```{r club name matching}
+club_names <- tribble(
+  ~short_name, ~long_name,
+  "Man United", "Manchester United",
+  "Huddersfield", "Huddersfield Town",
+  "Newcastle", "Newcastle United",
+  "Wolves", "Wolverhampton Wanderers",
+  "Cardiff", "Cardiff City",
+  "Leicester", "Leicester City",
+  "Tottenham", "Tottenham Hotspur",
+  "West Ham", "West Ham United",
+  "Brighton", "Brighton & Hove Albion",
+  "Man City", "Manchester City",
+  "Bolton", "Bolton Wanderers",
+  "Blackburn", "Blackburn Rovers",
+  "Wigan", "Wigan Athletic",
+  "QPR", "Queens Park Rangers",
+  "Hull", "Hull City",
+  "Swansea", "Swansea City",
+  "Stoke", "Stoke City",
+  "West Brom", "West Bromwich Albion",
+  "Derby", "Derby County",
+  "Charlton", "Charlton Athletic",
+  "Leeds", "Leeds United",
+  "Middlesboro", "Middlesbrough",
+  "Ipswich", "Ipswich Town",
+  "Coventry", "Coventry City",
+  "Bradford", "Bradford City",
+  "Sheffield Weds", "Sheffield Wednesday",
+  "Nott'm Forest", "Nottingham Forest",
+  "Norwich", "Norwich City",
+  "Birmingham", "Birmingham City")
+
+club_names %>% head() %>% knitr::kable()
+```
+
+### The games
+
+We're going to scrape the game data from the excellent [football-data.co.uk](http://football-data.co.uk) site. The game-by-game data files are stored like this: `http://football-data.co.uk/mmz4281/1819/E0.csv` where the `1819` signifies the 2018-2019 season.
+
+To get at this we'll create a vector of game files and then `purrr::map` the `read_csv` function over it. Sweet.
+
+```{r extract game data, message=FALSE}
+firstyear <- 1995
+lastyear <- 2019
+
+from_date <- seq(lastyear - 1, firstyear, -1) %>% as.character() %>% substr(3,4)
+to_date <- seq(lastyear, firstyear + 1, -1) %>% as.character() %>% substr(3,4)
+date_seq <- paste0(from_date, to_date)
+
+game_data_filenames <- paste0("http://football-data.co.uk/mmz4281/", date_seq, "/E0.csv")
+
+games_raw <- game_data_filenames %>% 
+  map(function(x) read_csv(x) %>% select(Date:FTAG) %>% as.data.frame()) %>% 
+  reduce(rbind) %>%
+  as_tibble() %>%
+  filter(complete.cases(.)) %>% 
+  mutate(Date = as.character(Date)) %>%
+  as_tibble()
+```
+
+There's a bunch of `problems()` with this file because of column inconsistencies but the main thing we need for our analysis - dates, teams and results are read in okay. Let's shut our eyes on the other stuff and pretend we didn't see it.
+
+### The writeback
+
+Let's dump these three datasets to feather for ease of extraction later.
+
+```{r write data to feather}
+club_names %>% write_feather(path = "../data/club_name_mapping.feather")
+games_raw %>% write_feather("../data/game_data_raw.feather")
+managers_prep %>% write_feather(path = "../data/managers.feather")
+```
+
+### Fixing game data
+
+Now that we have this raw data we need to fill it out. We have a table of matches but each match contains data for the home team and away team so it needs to be doubled out.
+
+```{r}
+games_raw <- read_feather("../data/game_data_raw.feather")
+managers_prep <- read_feather("../data/managers.feather")
+club_names <- read_feather("../data/club_name_mapping.feather")
+```
+
+First we need to replace the short names in the game data with the full name from our mapping table.
+
+```{r map club names}
+games_raw %<>% 
+  left_join(club_names, by = c("HomeTeam" = "short_name")) %>%
+  mutate(HomeTeam = ifelse(is.na(long_name), HomeTeam, long_name)) %>%
+  select(-long_name) %>% 
+  left_join(club_names, by = c("AwayTeam" = "short_name")) %>%
+  mutate(AwayTeam = ifelse(is.na(long_name), AwayTeam, long_name)) %>%
+  select(-long_name)
+```
+
+We add an identifier column for games so we can keep track of missing/duplicates later on.
+
+```{r add game id}
+games_prep <- games_raw %>% 
+  select(game_date = Date, everything()) %>% 
+  mutate(game_id = row_number())
+```
+
+We fix the game date column to an actual date.
+
+```{r add game date}
+games_prep %<>% 
+  mutate(game_date = case_when(
+  str_length(game_date) == 10 ~ as_date(game_date, format = "%d/%m/%Y", tz = "UTC"),
+  str_length(game_date) == 8 ~ as_date(game_date, format = "%d/%m/%y", tz = "UTC"),
+  TRUE ~ as_date('1900-01-01', tz = "UTC")))
+
+```
+
+And we split the game data into two so we get both sides of each result and bind together.
+
+```{r create results data}
+home_games <- games_prep %>% 
+  select(game_id, game_date, game_team = HomeTeam, goals = FTHG, opponent = AwayTeam, opponent_goals = FTAG) %>%
+  mutate(game_location = "Home", 
+         points = case_when(goals > opponent_goals ~ 3, goals < opponent_goals ~ 0, TRUE ~ 1))
+
+away_games <- games_prep %>% 
+  select(game_id, game_date, game_team = AwayTeam, goals = FTAG, opponent = HomeTeam, opponent_goals = FTHG) %>%
+  mutate(game_location = "Away", 
+         points = case_when(goals > opponent_goals ~ 3, goals < opponent_goals ~ 0, TRUE ~ 1))
+
+game_results_full <- bind_rows(home_games, away_games)
+```
+
+Let's also dump this to a feather.
+
+```{r write game results full}
+game_results_full %>% write_feather("../data/game_results_full.feather")
+```
+
+## Fix results data
+
+Load back in our feather file.
+
+```{r load results data}
+game_results_full_raw <- read_feather("../data/game_results_full.feather")
+managers <- read_feather("../data/managers.feather")
+```
+
+Check that we have no missing teams in our game data (i.e. every row has a manager)
+
+```{r check no missing teams}
+library(testthat)
+
+test_that('All games have a manager', expect_equal(game_results_full_raw %>% 
+  anti_join(managers,  by = c("game_team" = "managed_club")) %>%
+  select(game_team) %>%
+  distinct() %>%
+  nrow(), 0))
+```
+
+## Join results to managers by club name
+
+Use the club name to join results to managers. We also create a "valid_date" column which tracks whether the game date is between the management dates for the manager.
+
+```{r join results}
+full_result_data_raw <- game_results_full_raw %>%
+  left_join(managers, by = c("game_team" = "managed_club")) %>%
+  mutate(valid_date = (game_date >= managed_from & game_date <= managed_until))
+```
+
+Every game id should appear twice, once for the home and once for the away side. How many games appear less than or more than twice?
+
+```{r examine invalid games}
+full_result_data_raw %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% 
+  filter(n != 2) %>%
+  distinct(game_id) %>%
+  count()
+
+full_result_data_raw %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% 
+  filter(n != 2) %>%
+  group_by(game_id, game_team) %>%
+  mutate(team_n = n()) %>%
+  ungroup() %>%
+  arrange(game_id) %>%
+  select(game_id:opponent_goals, manager_name:managed_until, n:team_n) %>%
+  filter(n == 1 | team_n > 1) %>%
+  View()
+```
+
+Let's have a deeper look at these 24 games...
+```{r}
+full_result_data_raw %>% 
+  filter(valid_date) %>%
+  add_count(game_id) %>% 
+  filter(n != 2) %>%
+  arrange(game_id) %>%
+  knitr::kable()
+```
+
+We see a lot of them are due to overlapping management periods. 
+
+We will manually go back and fix these (one day). For now we're going to just remove these 24 games from the dataset.
+
+```{r filter valid games}
+full_result_data_valid <- full_result_data_raw %>%
+  filter(valid_date) %>%
+  add_count(game_id) %>% 
+  filter(n == 2)
+```
+
+Write to feather!
+
+```{r}
+full_result_data_valid %>% write_feather("../data/game_results_valid_final.feather")
+```
