@@ -190,19 +190,56 @@ Whilst that's logically okay it doesn't really work for this analysis since it w
 
 To help us find and iterate on the issues, we build a small function that will join the `game_results` and `managers` data and return any matches with issues (either missing or duplicated).
 
-```{r find problem matches}
+```{r find problem matches function}
 get_problem_matches <- function() {
   match_manager_join <- game_results_full %>% 
     left_join(managers_prepared, by = c('game_team' = 'managed_club')) %>%
     filter(game_date >= managed_from, game_date <= managed_until)
   
-  match_manager_join %>% tally()
+  missing_games <- game_results_full %>% anti_join(match_manager_join, by = "game_id") %>% mutate(problem = "missing")
+  duplicated_games <- match_manager_join %>% add_count(game_id) %>% filter(n > 2) %>% mutate(problem = "duplicated")
+  partial_games <- match_manager_join %>% group_by(game_id) %>% summarize(n_teams = n_distinct(game_team), n_rows = n()) %>% filter(n_teams != 2 | n_rows < 2) %>% select(game_id) %>% inner_join(match_manager_join, by = "game_id") %>% mutate(problem = "partial")
+  
+  errors <- duplicated_games %>% bind_rows(partial_games) %>% bind_rows(missing_games) %>% arrange(game_team, game_id, desc(game_date))
+  
+  errors
 }
+
+get_problem_matches() %>% distinct(game_id) %>% tally()
+
+get_problem_matches() %>% View()
 ```
 
+After lots of iteration we can identify the following fixes to be applied to the manager data:
+
+1. Remove Tomas Brolin as ever having managed Crystal Palace (7 games) - he was just a player
+2. Remove Adam Sadler as Leicester Manager (1 game) - he was caretaker ([data](https://www.worldfootball.net/teams/leicester-city/9/)).
+3. Fix Brendan Rodgers' start date at Leicester from 26th Feb - 27th Feb 2019. 
+4. Change Gerard Houllier's start date at Liverpool to 12th Nov 1998 (13 games)
+
+
+
+
+2001-10-14
+2002-03-16
+5
+
+Liverpool
+2002-03-17
+2004-05-24
+
 ```{r manager cleanup}
-managers_prep %<>%
+managers_prepared %<>%
   filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
+  filter(! (manager_name == "Adam Sadler" & managed_club == "Leicester City")) %>%
+  mutate(managed_from = if_else((manager_name == "Brendan Rodgers" & managed_club == "Leicester City"), as.Date("2019-02-27"), managed_from)) %>%
+  filter(! (manager_name == "Phil Thompson" & managed_club == "Liverpool")) %>%
+  filter(! (manager_name == "Gérard Houllier" & managed_club == "Liverpool" & managed_from == as.Date('2002-03-17'))) %>%
+  mutate(managed_from = if_else((manager_name == "Gérard Houllier" & managed_club == "Liverpool"), as.Date("1998-11-12"), managed_from)) %>%
+  mutate(managed_until = if_else((manager_name == "Gérard Houllier" & managed_club == "Liverpool"), as.Date("2004-06-30"), managed_until)) #%>%
+
+
+%>%
   filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
   filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City")) %>%
   filter(! (manager_name == "Kevin Bond" & managed_club == "Queens Park Rangers")) %>%
