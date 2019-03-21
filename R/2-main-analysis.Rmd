@@ -51,9 +51,15 @@ full_results %>%
 
 ```{r}
 full_results %<>% 
+<<<<<<< HEAD
   mutate(manager_tenure = as.numeric(game_date - managed_from)) %>%
   select(-valid_date, -n) %>%
   mutate(game_location = as.factor(game_location))
+=======
+  mutate(manager_tenure = as.numeric(game_date - managed_from) / 7) %>%
+  mutate(manager_time_remaining = as.numeric(managed_until - game_date) / 7) %>%
+  select(-valid_date, -n)
+>>>>>>> e5de343598463fb9afea1c32f19ea0ff77646122
 ```
 
 ```{r}
@@ -71,8 +77,46 @@ summary(goals_model)
 
 ```{r}
 full_results %>%
+  #filter(!manager_name %in% c('Alex Ferguson', 'Arsène Wenger', 'Alan Curbishley')) %>%
+  mutate(weeks_remaining = floor(manager_time_remaining)) %>%
+  filter(weeks_remaining <= 104) %>%
+  group_by(weeks_remaining, game_location) %>%
+  summarize(average_points = mean(points), ngames = n_distinct(game_id)) %>%
+  ggplot(aes(x = weeks_remaining, y = average_points, color = game_location, size = ngames)) +
+  geom_point(alpha = 0.7) +
+  scale_x_reverse() +
+  ylim(0.5,2.5) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 4), se = F) +
+  geom_hline(yintercept = mean(full_results$points))
+
+full_results %>%
+  #filter(!manager_name %in% c('Alex Ferguson', 'Arsène Wenger', 'Alan Curbishley')) %>%
+  mutate(weeks_tenure = floor(manager_tenure)) %>%
+  filter(weeks_tenure <= 104) %>%
+  group_by(weeks_tenure, game_location) %>%
+  summarize(average_points = mean(points), ngames = n_distinct(game_id)) %>%
+  ggplot(aes(x = weeks_tenure, y = average_points, color = game_location)) +
+  geom_point(alpha = 0.7) +
+  #ylim(0.5,2.5) +
+  geom_smooth(method = "gam", formula = y ~ splines::ns(x, 4), se = F) +
+  facet_wrap(~game_location,scales = "free") +
+  geom_hline(yintercept = mean(full_results$points)) 
+```
+
+```{r}
+full_results %>%
+  filter(game_team == "Chelsea") %>%
+  ggplot(aes(x = game_date, y = points, colour = paste(manager_name, managed_from, sep = ","))) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 3), se = F)
+
+```
+```
+
+
+
   #filter(manager_tenure <= 8*365.25) %>%
-  ggplot(aes(x = manager_tenure/365.25, y = jitter(points))) +
+  ggplot(aes(x = manager_time_remaining/365.25, y = jitter(points))) +
   geom_point(alpha = 0.3) +
   geom_smooth() +
   facet_wrap(~game_location)
