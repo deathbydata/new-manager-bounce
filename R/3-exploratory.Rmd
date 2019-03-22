@@ -53,6 +53,7 @@ game_and_manager_data %>%
   geom_smooth() + 
   labs(caption = source_text)
 ```
+
 **Distribution of goals per team per game**
 ```{r}
 game_and_manager_data %>%
@@ -71,6 +72,73 @@ game_and_manager_data %>%
   geom_smooth() + 
   labs(caption = source_text)
 ```
+
+```{r}
+home_team <- "Manchester United"
+away_team <- "Liverpool"
+
+home_average <- game_and_manager_data %>%
+  filter((game_team == home_team & game_location == "Home" & opponent == away_team)) %>%
+  summarize(h_goals = mean(goals)) %>%
+  pull(h_goals)
+
+
+%>%
+  group_by(goals) %>%
+  summarise(n_games = n_distinct(game_id)) %>%
+  mutate(pct_games = n_games / sum(n_games)) %>%
+  ggplot() +
+  geom_point(aes(x = goals, y = pct_games), colour = "red") +
+  geom_point(aes(x = goals, y = rpois(goals, game_and_manager_data %>%
+  filter((game_team == home_team & game_location == "Home" & opponent == away_team)) + summarise(mean_goals = mean(goals)) %>% pull(mean_goals) )), colour = "red") 
+
+
+  ggplot(aes(x = goals)) +
+  geom_histogram(binwidth = 1)
+  
+  
+get_game_score <- function(home_team, away_team) {
+  selected_subset <- game_and_manager_data %>%
+    filter(game_date <= as.Date('2019-01-01')) %>%
+    filter((game_team == home_team & game_location == "Home" & opponent == away_team)) 
+  
+  n_games <- selected_subset %>% summarise(n_games = n_distinct(game_id)) %>% pull(n_games)
+  
+  home_average <- selected_subset %>%
+  summarize(avg_goals = mean(goals)) %>%
+  pull(avg_goals)
+  
+  away_average <- selected_subset %>%
+  summarize(avg_goals = mean(opponent_goals)) %>%
+  pull(avg_goals)
+  
+  home_goals <- rpois(1, home_average)
+  away_goals <- rpois(1, away_average) 
+  
+  tribble(~home, ~away, ~games,
+          home_goals,away_goals,n_games)
+}
+
+get_game_score("Chelsea", "Crystal Palace")
+
+crossing(trial = 1:1000,
+         home_team = "Fulham",
+         away_team = "Liverpool") %>%
+  mutate(result = map2(home_team, away_team, get_game_score)) %>%
+  unnest() %>%
+  mutate(result = if_else(home > away, home_team, if_else(home < away, away_team, "DRAW"))) %>%
+  count(result) %>%
+  mutate(n = n/sum(n)) %>%
+  arrange(desc(n)) 
+    
+  
+
+map(1:10, get_game_score("Chelsea", "Crystal Palace"))
+
+rep(get_game_score("Bournemouth", "Newcastle"), 10)
+x<-replicate(10, get_game_score("Chelsea", "Crystal Palace"))
+```
+
 
 
 
