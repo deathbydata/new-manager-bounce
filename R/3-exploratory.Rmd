@@ -1,16 +1,20 @@
 ---
 title: "New Manager Bounce"
-subtitle: "Main Analysis"
+subtitle: "Exploratory Analysis"
 author: "Josh Muncke"
-date: "17/03/2019"
-output: html_document
+date: "21/03/2019"
+output: 
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Measuring the "New Manager Bounce" in the EPL
+## Exploratory Analysis
 
 ```{r load our packages, message=FALSE}
 library(tidyverse)
@@ -22,13 +26,53 @@ library(feather)
 
 ## Load data
 
-
-
 ```{r load data}
-full_results <- read_feather("../data/game_results_valid_final.feather")
+game_and_manager_data <- read_feather("../data/prep/game_and_manager_data_prep.feather")
+```
+
+## Plotting setup
+
+```{r plot setup}
+theme_set(theme_rb())
+source_text <- "Source: football-data.co.uk; Wikipedia"
 ```
 
 ## Exploratory Analysis
+
+### Simple questions
+
+**Average goals per game over time**
+```{r gpg over time, warning=F}
+game_and_manager_data %>%
+  mutate(game_month = round_date(game_date, "month")) %>%
+  group_by(game_month) %>%
+  summarise(goals = sum(goals), games = n_distinct(game_id)) %>%
+  mutate(goals_per_game = goals/games) %>%
+  ggplot(aes(x = game_month, y = (goals_per_game))) +
+  geom_point() + 
+  geom_smooth() + 
+  labs(caption = source_text)
+```
+**Distribution of goals per team per game**
+```{r}
+game_and_manager_data %>%
+  ggplot(aes(x = goals, fill = game_location)) +
+  geom_histogram(binwidth = 1) +
+  facet_wrap(~ game_location) +
+  scale_fill_redbull("bloomberg")
+
+
+  mutate(game_month = round_date(game_date, "month")) %>%
+  group_by(game_month) %>%
+  summarise(goals = sum(goals), games = n_distinct(game_id)) %>%
+  mutate(goals_per_game = goals/games) %>%
+  ggplot(aes(x = game_month, y = (goals_per_game))) +
+  geom_point() + 
+  geom_smooth() + 
+  labs(caption = source_text)
+```
+
+
 
 ```{r}
 library(directlabels)
