@@ -123,7 +123,7 @@ test_that('Same number of distinct game ids',
 
 Finally let's do a quick analysis to look at the average number of games per month over time - just a simple visual gut check. I'm going to use `ggplot2` and shamelessly self-promote the `[redbull](http://github.com/deathbydata/redbull)` package I developed for themeing.
 
-```{r visualize games over time}
+```{r visualize games over time, warning=FALSE}
 theme_set(theme_rb())
 
 game_results_full %>%
@@ -205,8 +205,6 @@ get_problem_matches <- function() {
   errors
 }
 
-
-
 get_problem_matches() %>% View()
 ```
 
@@ -229,15 +227,6 @@ After lots of iteration we can identify the following fixes to be applied to the
 6. Modify Gérard Houllier's end date at Aston Villa to 22nd April 2011 - he was taken ill on 20th April [did not return for any subsequent matches](https://en.wikipedia.org/wiki/G%C3%A9rard_Houllier#Aston_Villa) - (5 games)
 7. Rémi Garde started at Aston Villa on 2nd Nov 2015, fix Kevin MacDonald's end date to be 1st Nov 2015 - (1 game)
 
-
-2001-10-14
-2002-03-16
-5
-
-Liverpool
-2002-03-17
-2004-05-24
-
 ```{r manager cleanup}
 managers_prepared %<>%
   filter(! (manager_name == "Tomas Brolin" & managed_club == "Crystal Palace")) %>%
@@ -252,11 +241,12 @@ managers_prepared %<>%
   mutate(managed_until = if_else((manager_name == "Kevin MacDonald" & managed_club == "Aston Villa" & managed_until == as.Date("2015-11-02")), as.Date("2015-11-01"), managed_until)) #%>%
 
 
-%>%
-  filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
-  filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City")) %>%
-  filter(! (manager_name == "Kevin Bond" & managed_club == "Queens Park Rangers")) %>%
-  mutate(managed_until = if_else((manager_name == "Roy Evans" & managed_club == "Liverpool" & managed_until == as.Date("1998-11-12")), as.Date("1998-06-30"), managed_until))
+# %>%
+#   filter(! (manager_name == "Ray Lewington" & managed_club == "Crystal Palace")) %>%
+#   filter(! (manager_name == "Mike Stowell" & managed_club == "Leicester City")) %>%
+#   filter(! (manager_name == "Kevin Bond" & managed_club == "Queens Park Rangers")) %>%
+#   mutate(managed_until = if_else((manager_name == "Roy Evans" & managed_club == "Liverpool" & managed_until == as.Date("1998-11-12")), as.Date("1998-06-30"), managed_until))
+
 ```
 
 Also - some of the management date ranges are a little tricky. In some cases the new manager takes over the day *after* the old manager (this is fine). In other cases it's the *same* day (this causes problems). In yet other cases it is many days later (could also causes problems).
@@ -275,75 +265,32 @@ managers_prepared %<>%
   ungroup()
 ```
 
+Finally save the prepared manager data.
 
-Check that we have no missing teams in our game data (i.e. every row has a manager)
-
-```{r check no missing teams}
-library(testthat)
-
-test_that('All games have a manager', expect_equal(game_results_full_raw %>% 
-  anti_join(managers,  by = c("game_team" = "managed_club")) %>%
-  select(game_team) %>%
-  distinct() %>%
-  nrow(), 0))
+```{r save prepared manager data}
+managers_prepared %>%
+  write_feather("../data/prep/manager_data_prep.feather")
 ```
 
 ## Join results to managers by club name
 
-Use the club name to join results to managers. We also create a "valid_date" column which tracks whether the game date is between the management dates for the manager.
+Use the club name to join results to managers and remove any matches which do not fall between the manager start/end dates.
 
 ```{r join results}
-full_result_data_raw <- game_results_full_raw %>%
-  left_join(managers, by = c("game_team" = "managed_club")) %>%
-  mutate(valid_date = (game_date >= managed_from & game_date <= managed_until))
+game_and_manager_data_prepared <- game_results_full %>%
+  left_join(managers_prepared, by = c("game_team" = "managed_club")) %>%
+  filter(game_date >= managed_from & game_date <= managed_until)
 ```
-
-Every game id should appear twice, once for the home and once for the away side. How many games appear less than or more than twice?
-
-```{r examine invalid games}
-full_result_data_raw %>% 
-  filter(valid_date) %>%
-  add_count(game_id) %>% 
-  filter(n != 2) %>%
-  distinct(game_id) %>%
-  count()
-
-full_result_data_raw %>% 
-  filter(valid_date) %>%
-  add_count(game_id) %>% 
-  filter(n != 2) %>%
-  group_by(game_id, game_team) %>%
-  mutate(team_n = n()) %>%
-  ungroup() %>%
-  arrange(game_id) %>%
-  select(game_id:opponent_goals, manager_name:managed_until, n:team_n) %>%
-  filter(n == 1 | team_n > 1) %>%
-  View()
-```
-
-Let's have a deeper look at these 24 games...
-```{r}
-full_result_data_raw %>% 
-  filter(valid_date) %>%
-  add_count(game_id) %>% 
-  filter(n != 2) %>%
-  arrange(game_id) %>%
-  knitr::kable()
-```
-
-We see a lot of them are due to overlapping management periods. 
-
-We will manually go back and fix these (one day). For now we're going to just remove these 24 games from the dataset.
 
 ```{r filter valid games}
-full_result_data_valid <- full_result_data_raw %>%
-  filter(valid_date) %>%
+game_and_manager_data_prepared %<>%
   add_count(game_id) %>% 
-  filter(n == 2)
+  filter(n == 2) %>%
+  select(-n)
 ```
 
 Write to feather!
 
-```{r}
-full_result_data_valid %>% write_feather("../data/game_results_valid_final.feather")
+```{r write final game and manager data}
+game_and_manager_data_prepared %>% write_feather("../data/prep/game_and_manager_data_prep.feather")
 ```
