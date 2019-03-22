@@ -205,19 +205,29 @@ get_problem_matches <- function() {
   errors
 }
 
-get_problem_matches() %>% distinct(game_id) %>% tally()
+
 
 get_problem_matches() %>% View()
+```
+
+```{r}
+get_problem_matches() %>% distinct(game_id) %>% tally()
+get_problem_matches() %>% 
+  group_by(manager_name, game_team, managed_from, managed_until) %>% 
+  summarize(n_games = n_distinct(game_id)) %>% 
+  arrange(game_team, managed_from) %>%
+  View()
 ```
 
 After lots of iteration we can identify the following fixes to be applied to the manager data:
 
 1. Remove Tomas Brolin as ever having managed Crystal Palace (7 games) - he was just a player
 2. Remove Adam Sadler as Leicester Manager (1 game) - he was caretaker ([data](https://www.worldfootball.net/teams/leicester-city/9/)).
-3. Fix Brendan Rodgers' start date at Leicester from 26th Feb - 27th Feb 2019. 
-4. Change Gerard Houllier's start date at Liverpool to 12th Nov 1998 (13 games)
-
-
+3. Fix Brendan Rodgers' start date at Leicester from 26th Feb - 27th Feb 2019. (1 game)
+4. Change Gerard Houllier's start date at Liverpool to 12th Nov 1998 and end date to 30th June 2004 (12 games)
+5. Remove John Deehan as Aston Villa manager (only caretaker) - (4 games)
+6. Modify Gérard Houllier's end date at Aston Villa to 22nd April 2011 - he was taken ill on 20th April [did not return for any subsequent matches](https://en.wikipedia.org/wiki/G%C3%A9rard_Houllier#Aston_Villa) - (5 games)
+7. Rémi Garde started at Aston Villa on 2nd Nov 2015, fix Kevin MacDonald's end date to be 1st Nov 2015 - (1 game)
 
 
 2001-10-14
@@ -236,7 +246,10 @@ managers_prepared %<>%
   filter(! (manager_name == "Phil Thompson" & managed_club == "Liverpool")) %>%
   filter(! (manager_name == "Gérard Houllier" & managed_club == "Liverpool" & managed_from == as.Date('2002-03-17'))) %>%
   mutate(managed_from = if_else((manager_name == "Gérard Houllier" & managed_club == "Liverpool"), as.Date("1998-11-12"), managed_from)) %>%
-  mutate(managed_until = if_else((manager_name == "Gérard Houllier" & managed_club == "Liverpool"), as.Date("2004-06-30"), managed_until)) #%>%
+  mutate(managed_until = if_else((manager_name == "Gérard Houllier" & managed_club == "Liverpool"), as.Date("2004-06-30"), managed_until)) %>%
+  filter(! (manager_name == "John Deehan" & managed_club == "Aston Villa")) %>%
+  mutate(managed_until = if_else((manager_name == "Gérard Houllier" & managed_club == "Aston Villa"), as.Date("2011-04-22"), managed_until)) %>%
+  mutate(managed_until = if_else((manager_name == "Kevin MacDonald" & managed_club == "Aston Villa" & managed_until == as.Date("2015-11-02")), as.Date("2015-11-01"), managed_until)) #%>%
 
 
 %>%
