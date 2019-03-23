@@ -72,10 +72,25 @@ game_and_manager_data %>%
 ```
 ## Tenure
 
+### New features
+```{r tenure features}
+game_and_manager_data %<>%
+  mutate(mgr_tenure_at_game_in_weeks = as.numeric(game_date - managed_from)/7) %>%
+  mutate(mgr_time_until_end_in_weeks = as.numeric(managed_until - game_date)/7) %>%
+  mutate(goal_difference = goals - opponent_goals)
+```
+
 **Correlation between goals scored by team and manager tenure at time of match**
 
 ```{r tenure goals relationship}
-
+game_and_manager_data %>%
+  filter(mgr_time_until_end_in_weeks <= 2 * 52) %>%
+  ggplot(aes(x = mgr_time_until_end_in_weeks, y = jitter(goals), color = game_location)) +
+  geom_point(alpha = 0.005) +
+  facet_wrap(~ game_location) +
+  scale_color_redbull("bloomberg") +
+  geom_smooth(method = "loess") +
+  scale_x_reverse()
 ```
 
 ```{r}
